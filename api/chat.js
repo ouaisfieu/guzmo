@@ -1,17 +1,25 @@
-// api/chat.js
 import OpenAI from "openai";
 
 const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY, // définie dans Vercel → Settings → Environment Variables
+  apiKey: process.env.OPENAI_API_KEY,
 });
 
 export default async function handler(req, res) {
-  // On accepte uniquement les requêtes POST
+  // CORS headers pour éviter les erreurs cross-origin
+  res.setHeader('Access-Control-Allow-Credentials', true);
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+  res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
+
+  if (req.method === 'OPTIONS') {
+    res.status(200).end();
+    return;
+  }
+
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Méthode non autorisée, utilise POST." });
   }
 
-  // Récupération du message envoyé par le navigateur
   let body = req.body;
   if (typeof body === "string") {
     try {
@@ -21,39 +29,54 @@ export default async function handler(req, res) {
     }
   }
 
-  const { message } = body || {};
+  const { message, messages } = body || {};
 
-  if (!message || typeof message !== "string") {
-    return res.status(400).json({ error: "Message manquant ou invalide." });
+  // Support pour historique complet (messages) ou message simple
+  let conversationMessages = [];
+  
+  if (messages && Array.isArray(messages)) {
+    conversationMessages = messages;
+  } else if (message && typeof message === "string") {
+    conversationMessages = [
+      {
+        role: "system",
+        content:
+          "Tu es l'assistant dystopique-rétro du projet ouaisfi.eu, parlant comme un terminal des années 80. " +
+          "Tu aides sur la citoyenneté, l'éducation permanente, les jeux pédagogiques, " +
+          "les tests de recrutement bienveillants, la guerre narrative, la découverte critique des technologies. " +
+          "Utilise parfois [SYSTÈME], [OK], [DONNÉES] dans tes réponses. Style terminal rétro. " +
+          "Tu ne donnes jamais d'informations permettant d'identifier quelqu'un. " +
+          "Tu expliques de manière accessible, structurée, sans jargon inutile."
+      },
+      {
+        role: "user",
+        content: message
+      }
+    ];
+  } else {
+    return res.status(400).json({ error: "Message ou messages manquant(s)." });
   }
 
   try {
     const completion = await client.chat.completions.create({
-      model: "gpt-4.1-mini", // modèle léger et pas trop cher
-      messages: [
-        {
-          role: "system",
-          content:
-            "Tu es l’assistant du projet ouaisfi.eu. " +
-            "Tu aides sur la citoyenneté, l’éducation permanente, les jeux pédagogiques, " +
-            "les tests de recrutement bienveillants, la guerre narrative, la découverte critique des technologies. " +
-            "Tu ne donnes jamais d’informations permettant d’identifier quelqu’un dans la vraie vie. " +
-            "Tu expliques de manière accessible, structurée, sans jargon inutile."
-        },
-        {
-          role: "user",
-          content: message
-        }
-      ],
+      model: "gpt-4o-mini", // Corrigé: c'était "gpt-4.1-mini" qui n'existe pas
+      messages: conversationMessages,
       max_tokens: 600,
-      temperature: 0.6
+      temperature: 0.7
     });
 
     const reply = completion.choices?.[0]?.message?.content || "";
 
-    return res.status(200).json({ reply });
+    // Support pour les deux formats de réponse
+    return res.status(200).json({ 
+      reply: reply,
+      message: reply 
+    });
   } catch (err) {
     console.error("Erreur OpenAI:", err);
-    return res.status(500).json({ error: "Erreur côté OpenAI ou serveur." });
+    return res.status(500).json({ 
+      error: "Erreur côté OpenAI ou serveur.",
+      details: err.message 
+    });
   }
 }
